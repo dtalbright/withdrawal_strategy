@@ -15,8 +15,95 @@ Notes:
 """
 
 import csv
+import json
+import time
+import pandas as pd
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
+
+import yfinance as yf
+
+CACHE_FILENAME = "ticker_data_cache.json"
+CACHE_TTL = 7 * 24 * 3600  # seconds — how “fresh” a cache entry may be (one week)
+
+def load_cache() -> Dict[str, Dict]:
+    if Path(CACHE_FILENAME).exists():
+        with open(CACHE_FILENAME, "r") as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return {}
+    return {}
+
+def save_cache(cache, filename="cache.json"):
+    def convert(o):
+        if isinstance(o, pd.Timestamp):
+            return o.isoformat()
+        if isinstance(o, dict):
+            return {str(k): convert(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [convert(v) for v in o]
+        return o
+
+    with open(filename, "w") as f:
+        json.dump(convert(cache), f, indent=2)
+
+def fetch_ticker_data(ticker: str) -> Dict:
+    """
+    Fetch price, yield, dividend history, etc. for a ticker, via yfinance.
+    Returns a dict with keys: price, trailing_yield_pct, dividend_history (pandas Series or list), ...
+    """
+    tk = yf.Ticker(ticker)
+    info = tk.info  # dictionary of metadata
+    # price: try to get current price
+    price = info.get("regularMarketPrice") or info.get("previousClose") or info.get("currentPrice")
+
+    # trailing annual dividend yield (fraction)
+    # yfinance’s `info` may include 'trailingAnnualDividendYield' (a fraction, e.g. 0.015)
+    trailing_yield_frac = info.get("trailingAnnualDividendYield")
+    trailing_yield_pct = None
+    if trailing_yield_frac is not None:
+        trailing_yield_pct = trailing_yield_frac * 100.0
+
+    # dividend history (past dividends)
+    # Use tk.dividends, which is a pandas Series indexed by date → dividend per share
+    divhist = None
+    try:
+        divhist = tk.dividends  # a pandas Series
+    except Exception as e:
+        divhist = None
+
+    return {
+        "price": price,
+        "trailing_yield_pct": trailing_yield_pct,
+        "dividend_history": divhist.to_dict() if divhist is not None else None,
+        "fetched_time": time.time(),
+    }
+
+def get_ticker_info(ticker: str, cache: Dict[str, Dict], force_refresh: bool = False) -> Dict:
+    """
+    Return the ticker info, using cache or fetch if needed.
+    """
+    rec = cache.get(ticker)
+    if rec and not force_refresh:
+        age = time.time() - rec.get("fetched_time", 0)
+        if age < CACHE_TTL:
+            return rec
+    # Otherwise fetch fresh
+    new = fetch_ticker_data(ticker)
+    cache[ticker] = new
+    return new
+
+def infer_dividend_type(divhist: Optional[Dict]) -> str:
+    """
+    Very naive inference: if historical dividends exist, assume 'qualified' by default.
+    If none or erratic, fallback to 'ordinary'.
+    You could strengthen this by checking fund/ticker documentation or whether dividends are ordinary-income sources.
+    """
+    if divhist:
+        return "qualified"
+    return "ordinary"
+	
 
 # ---------- 2026 single-filer tax parameters (IRS Rev Proc 2025-32) ----------
 STANDARD_DEDUCTION = 16100.0  # single filer for 2026. Source: IRS Rev Proc. :contentReference[oaicite:2]{index=2}
@@ -52,7 +139,7 @@ def compute_market_value(row: Dict[str,str]) -> float:
 
 def parse_portfolio_csv(path: str) -> List[Dict]:
     rows = []
-    with open(path, newline='') as f:
+    with open(path, newline="") as f:
         reader = csv.DictReader(f)
         for r in reader:
             rows.append(r)
@@ -113,7 +200,7 @@ def capital_gains_tax_for_qualified(q_amount: float, ordinary_income_after_deduc
     return tax
 
 # ---------- Main estimator ----------
-def estimate_from_rows(rows: List[Dict]) -> Dict:
+def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict], force_refresh: bool = False):
     """
     rows: list of dicts as parsed from CSV (string values)
     Returns a dict with annual and monthly totals and estimated federal tax.
@@ -125,26 +212,49 @@ def estimate_from_rows(rows: List[Dict]) -> Dict:
     # We'll treat deferred yields as ordinary taxable income when withdrawn
 
     for r in rows:
-        ticker = r.get("ticker","?")
-        account = r.get("account_type","").strip().lower()
-        if account not in ("deferred","brokerage","roth"):
-            raise ValueError(f"account_type must be one of deferred, brokerage, roth. Problem row ticker={ticker}")
+        ticker = r["ticker"].strip().upper()
+        acct = r["account_type"].strip().lower()
+        shares = float(r["shares"])
+        cost_basis = float(r["cost_basis"])
+        # For simplicity ignoring cap_gain_method here except store it
 
-        mv = compute_market_value(r)
-        try:
-            annual_yield_pct = float(r.get("annual_yield_pct","0") or 0.0)
-        except:
-            annual_yield_pct = 0.0
-        annual_income = mv * (annual_yield_pct / 100.0)
+        info = get_ticker_info(ticker, cache, force_refresh=force_refresh)
+        price = r.get("override_price")
+        if price is not None and price.strip() != "":
+            price = float(price)
+        else:
+            price = info.get("price")
+        if price is None:
+            raise RuntimeError(f"Could not fetch price for {ticker}")
 
-        annual_by_account[account] += annual_income
+        yield_pct = None
+        y_over = r.get("override_yield_pct")
+        if y_over is not None and y_over.strip() != "":
+            yield_pct = float(y_over)
+        else:
+            yield_pct = info.get("trailing_yield_pct")
+        if yield_pct is None:
+            # fallback: if you have dividend_history, you could approximate: sum(dividends) / price
+            divhist = info.get("dividend_history")
+            if divhist:
+                total_div = sum(divhist.values())
+                yield_pct = (total_div / price) * 100.0
+            else:
+                yield_pct = 0.0
 
-        if account == "brokerage":
-            dtype = r.get("dividend_type","ordinary").strip().lower()
-            if dtype == "qualified":
+        # Infer dividend type unless overridden
+        div_type = r.get("override_dividend_type")
+        if div_type is None or div_type.strip() == "":
+            div_type = infer_dividend_type(info.get("dividend_history"))
+
+        mv = shares * price
+        annual_income = mv * (yield_pct / 100.0)
+        annual_by_account[acct] = annual_by_account.get(acct, 0.0) + annual_income
+
+        if acct == "brokerage":
+            if div_type.strip().lower() == "qualified":
                 brokerage_qualified += annual_income
             else:
-                # treat 'ordinary' or 'interest' or other as taxable ordinary income
                 brokerage_ordinary += annual_income
 
     # Totals
@@ -180,6 +290,7 @@ def estimate_from_rows(rows: List[Dict]) -> Dict:
         "annual_by_account": annual_by_account,
         "brokerage_qualified": brokerage_qualified,
         "brokerage_ordinary": brokerage_ordinary,
+        "cache_used": True,
         "total_annual_withdrawal": total_annual,
         "total_monthly_withdrawal": total_monthly,
         "taxable_withdrawals_annual": taxable_withdrawals_annual,
@@ -211,11 +322,17 @@ def print_report(res: Dict):
 
 if __name__ == "__main__":
     import argparse
-    p = argparse.ArgumentParser(description="Estimate withdrawal amounts from portfolio yields and 2026 federal tax (single).")
-    p.add_argument("csvfile", help="CSV file with portfolio rows (see header description in script).")
-    args = p.parse_args()
+
+    parser = argparse.ArgumentParser(description="Withdrawal estimator with auto price/yield lookup + cache.")
+    parser.add_argument("csvfile", help="CSV file of holdings (ticker,account_type,shares,cost_basis,cap_gain_method, optional overrides)")
+    parser.add_argument("--refresh", action="store_true",
+                        help="Force refresh of all ticker data (ignore cache).")
+    args = parser.parse_args()
 
     rows = parse_portfolio_csv(args.csvfile)
-    res = estimate_from_rows(rows)
+    cache = load_cache()
+    res = estimate_with_lookup(rows, cache, force_refresh=args.refresh)
+    save_cache(cache)
+	
     print_report(res)
 
