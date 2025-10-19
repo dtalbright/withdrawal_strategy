@@ -205,14 +205,44 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
         if price is None:
             raise RuntimeError(f"Could not fetch price for {ticker}")
 
-        yield_pct = info.get("trailing_yield_pct")
-        if yield_pct is None:
-            divhist = info.get("dividend_history")
-            if divhist:
-                total_div = sum(divhist.values())
-                yield_pct = (total_div / price) * 100.0
+        # --- Determine yield_pct ---
+        yield_override = r.get("override_yield_pct")
+        if yield_override is not None:
+            # Use override if provided (float or string)
+            yield_pct = float(yield_override)
+            print(f"[INFO] Using override yield for {ticker}: {yield_pct:.2f}%")
+        else:
+            yield_pct = info.get("trailing_yield_pct")
+            if yield_pct is None or yield_pct == 0.0:
+                divhist = info.get("dividend_history")
+                price = info.get("price", 1.0)
+                if divhist:
+                    # Convert to Series
+                    div_series = pd.Series(divhist)
+                    # Ensure DatetimeIndex, UTC to handle mixed tz in cache
+                    div_series.index = pd.to_datetime(div_series.index, utc=True)
+
+                    # TZ-safe one year ago
+                    if isinstance(div_series.index, pd.DatetimeIndex) and div_series.index.tz is not None:
+                        one_year_ago = pd.Timestamp.now(tz=div_series.index.tz) - pd.DateOffset(years=1)
+                    else:
+                        one_year_ago = pd.Timestamp.now() - pd.DateOffset(years=1)
+
+                    # Filter last 12 months
+                    recent_divs = div_series[div_series.index > one_year_ago]
+                    if not recent_divs.empty:
+                        total_div = recent_divs.sum()
+                        yield_pct = (total_div / price) * 100.0
+                        print(f"[INFO] Inferred trailing 12-month yield for {ticker}: {yield_pct:.2f}%")
+                    else:
+                        yield_pct = 0.0
+                        print(f"[INFO] No dividends in last 12 months for {ticker}, yield set to 0")
+                else:
+                    yield_pct = 0.0
+                    print(f"[INFO] No dividend history for {ticker}, yield set to 0")
             else:
-                yield_pct = 0.0
+                print(f"[INFO] Using cached trailing yield for {ticker}: {yield_pct:.2f}%")
+
 
         div_type = infer_dividend_type(info.get("dividend_history"))
         mv = shares * price
