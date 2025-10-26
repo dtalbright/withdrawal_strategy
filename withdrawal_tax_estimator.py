@@ -67,21 +67,21 @@ def save_cache(cache, filename=CACHE_FILENAME):
 
 # ---------- Data fetching ----------
 def fetch_ticker_data(ticker: str) -> Dict:
-    tk = yf.Ticker(ticker)
-    info = tk.info
-    price = info.get("regularMarketPrice") or info.get("previousClose") or info.get("currentPrice")
-
-    trailing_yield_frac = info.get("trailingAnnualDividendYield")
-    trailing_yield_pct = trailing_yield_frac * 100.0 if trailing_yield_frac is not None else None
-
-    try:
-        divhist = tk.dividends
-    except Exception:
+    if ticker.endswith("XX"):
+        price = 1.0
         divhist = None
+    else:
+        tk = yf.Ticker(ticker)
+        info = tk.info
+        price = info.get("regularMarketPrice") or info.get("previousClose") or info.get("currentPrice")
+
+        try:
+            divhist = tk.dividends
+        except Exception:
+            divhist = None
 
     return {
         "price": price,
-        "trailing_yield_pct": trailing_yield_pct,
         "dividend_history": divhist.to_dict() if divhist is not None else None,
         "fetched_time": time.time(),
     }
@@ -194,6 +194,7 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
     annual_by_account = {"deferred": 0.0, "brokerage": 0.0, "roth": 0.0}
     brokerage_qualified = 0.0
     brokerage_ordinary = 0.0
+    brokerage_capital_gains = 0.0
 
     for r in rows:
         ticker = r["ticker"].strip().upper()
@@ -205,57 +206,71 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
         if price is None:
             raise RuntimeError(f"Could not fetch price for {ticker}")
 
-        # --- Determine yield_pct ---
+        # --- Determine yield_pct (simplified logic) ---
         yield_override = r.get("override_yield_pct")
+        price = info.get("price") or 1.0
+
         if yield_override is not None:
-            # Use override if provided (float or string)
+            # Explicit override for money market funds (or any manual entry)
             yield_pct = float(yield_override)
             print(f"[INFO] Using override yield for {ticker}: {yield_pct:.2f}%")
+
         else:
-            yield_pct = info.get("trailing_yield_pct")
-            if yield_pct is None or yield_pct == 0.0:
-                divhist = info.get("dividend_history")
-                price = info.get("price", 1.0)
-                if divhist:
-                    # Convert to Series
-                    div_series = pd.Series(divhist)
-                    # Ensure DatetimeIndex, UTC to handle mixed tz in cache
-                    div_series.index = pd.to_datetime(div_series.index, utc=True)
+            # Always compute yield based on trailing 12-month actual dividends
+            divhist = info.get("dividend_history")
+            if not divhist:
+                yield_pct = 0.0
+                print(f"[INFO] No dividend history for {ticker}, yield set to 0")
+            else:
+                # Keep only the last 2 years of dividend data for cache compactness
+                div_series = pd.Series(divhist)
+                div_series.index = pd.to_datetime(div_series.index, utc=True, errors="coerce")
+                div_series = div_series[~div_series.index.isna()]  # remove bad timestamps
+                two_years_ago = pd.Timestamp.now(tz=div_series.index.tz) - pd.DateOffset(years=2)
+                div_series = div_series[div_series.index > two_years_ago]
 
-                    # TZ-safe one year ago
-                    if isinstance(div_series.index, pd.DatetimeIndex) and div_series.index.tz is not None:
-                        one_year_ago = pd.Timestamp.now(tz=div_series.index.tz) - pd.DateOffset(years=1)
-                    else:
-                        one_year_ago = pd.Timestamp.now() - pd.DateOffset(years=1)
+                # Update the cache with trimmed history
+                cache[ticker]["dividend_history"] = div_series.to_dict()
 
-                    # Filter last 12 months
-                    recent_divs = div_series[div_series.index > one_year_ago]
-                    if not recent_divs.empty:
-                        total_div = recent_divs.sum()
-                        yield_pct = (total_div / price) * 100.0
-                        print(f"[INFO] Inferred trailing 12-month yield for {ticker}: {yield_pct:.2f}%")
-                    else:
-                        yield_pct = 0.0
-                        print(f"[INFO] No dividends in last 12 months for {ticker}, yield set to 0")
+                # Now compute trailing 12-month yield
+                one_year_ago = pd.Timestamp.now(tz=div_series.index.tz) - pd.DateOffset(years=1)
+                recent_divs = div_series[div_series.index > one_year_ago]
+
+                if not recent_divs.empty and price > 0:
+                    total_div = recent_divs.sum()
+                    yield_pct = (total_div / price) * 100.0
+                    print(f"[INFO] TTM dividend yield for {ticker}: {yield_pct:.2f}%")
                 else:
                     yield_pct = 0.0
-                    print(f"[INFO] No dividend history for {ticker}, yield set to 0")
-            else:
-                print(f"[INFO] Using cached trailing yield for {ticker}: {yield_pct:.2f}%")
+                    print(f"[INFO] No dividends in the last 12 months for {ticker}, yield set to 0")
 
+        # --- Determine dividend tax type ---
+        dividend_tax_type = r.get("dividend_tax_type")
+        if yield_override is not None:
+            # Money markets or manual yields → ordinary income
+            dividend_tax_type = (dividend_tax_type or "ordinary").lower()
+        else:
+            # Default for any dividend-paying ETF/stock → qualified
+            dividend_tax_type = (dividend_tax_type or "qualified").lower()
 
-        div_type = infer_dividend_type(info.get("dividend_history"))
         mv = shares * price
         annual_income = mv * (yield_pct / 100.0)
-        print(f'Ticker: {ticker}, Income: {annual_income}')
+        print(f"[CALC] {ticker}: MV=${mv:,.2f}, Income=${annual_income:,.2f}, Type={dividend_tax_type}")
+
+        # --- Accumulate by account type ---
+        if acct not in annual_by_account:
+            raise ValueError(f"Unknown account type: {acct}")
         annual_by_account[acct] += annual_income
 
         if acct == "brokerage":
-            if div_type == "qualified":
+            if dividend_tax_type == "qualified":
                 brokerage_qualified += annual_income
+            elif dividend_tax_type == "capital_gains":
+                brokerage_capital_gains += annual_income
             else:
                 brokerage_ordinary += annual_income
 
+    # --- Totals and tax computations ---
     total_annual = sum(annual_by_account.values())
     total_monthly = total_annual / 12.0
 
@@ -267,18 +282,39 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
 
     ordinary_after_deduction = max(0.0, taxable_ordinary - STANDARD_DEDUCTION)
     ordinary_tax = ordinary_tax_on_amount(ordinary_after_deduction)
-    capg_tax = capital_gains_tax_for_qualified(brokerage_qualified, ordinary_after_deduction)
+
+    # Step 1: tax on qualified dividends
+    qualified_dividend_tax = capital_gains_tax_for_qualified(
+        brokerage_qualified, ordinary_after_deduction
+    )
+
+    # Step 2: now treat capital gains distributions, stacking after qualified dividends
+    ordinary_plus_q = ordinary_after_deduction + brokerage_qualified
+    capital_gains_tax_amount = capital_gains_tax_for_qualified(
+        brokerage_capital_gains, ordinary_plus_q
+    )
+
+    # Step 3: total LTCG / qualified dividend tax
+    capg_tax = qualified_dividend_tax + capital_gains_tax_amount
+
     federal_tax = ordinary_tax + capg_tax
 
     taxable_withdrawals_annual = (
-        annual_by_account["deferred"] + brokerage_ordinary + brokerage_qualified + ss_taxable
+        annual_by_account["deferred"]
+        + brokerage_ordinary
+        + brokerage_qualified
+        + brokerage_capital_gains
+        + ss_taxable
     )
-    effective_rate = (federal_tax / taxable_withdrawals_annual) if taxable_withdrawals_annual > 0 else 0.0
+    effective_rate = (
+        federal_tax / taxable_withdrawals_annual if taxable_withdrawals_annual > 0 else 0.0
+    )
 
     return {
         "annual_by_account": annual_by_account,
         "brokerage_qualified": brokerage_qualified,
         "brokerage_ordinary": brokerage_ordinary,
+        "brokerage_capital_gains": brokerage_capital_gains,
         "social_security_monthly": social_security_monthly,
         "social_security_taxable_annual": ss_taxable,
         "total_annual_withdrawal": total_annual + ss_annual,
@@ -290,6 +326,120 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
         "capital_gains_tax": capg_tax,
         "standard_deduction_used": min(STANDARD_DEDUCTION, taxable_ordinary),
     }
+
+#def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
+#                         force_refresh: bool = False,
+#                         social_security_monthly: float = 0.0):
+#    annual_by_account = {"deferred": 0.0, "brokerage": 0.0, "roth": 0.0}
+#    brokerage_qualified = 0.0
+#    brokerage_ordinary = 0.0
+#    brokerage_capital_gains = 0.0
+#
+#    for r in rows:
+#        ticker = r["ticker"].strip().upper()
+#        acct = r["account_type"].strip().lower()
+#        shares = float(r["shares"])
+#
+#        info = get_ticker_info(ticker, cache, force_refresh=force_refresh)
+#        price = info.get("price")
+#        if price is None:
+#            raise RuntimeError(f"Could not fetch price for {ticker}")
+#
+#        # --- Determine yield_pct (simplified logic) ---
+#        yield_override = r.get("override_yield_pct")
+#        price = info.get("price") or 1.0
+#
+#        if yield_override is not None:
+#            # Explicit override for money market funds (or any manual entry)
+#            yield_pct = float(yield_override)
+#            print(f"[INFO] Using override yield for {ticker}: {yield_pct:.2f}%")
+#
+#        else:
+#            # Always compute yield based on trailing 12-month actual dividends
+#            divhist = info.get("dividend_history")
+#            if not divhist:
+#                yield_pct = 0.0
+#                print(f"[INFO] No dividend history for {ticker}, yield set to 0")
+#            else:
+#                # Keep only the last 2 years of dividend data for cache compactness
+#                div_series = pd.Series(divhist)
+#                div_series.index = pd.to_datetime(div_series.index, utc=True, errors="coerce")
+#                div_series = div_series[~div_series.index.isna()]  # remove bad timestamps
+#                two_years_ago = pd.Timestamp.now(tz=div_series.index.tz) - pd.DateOffset(years=2)
+#                div_series = div_series[div_series.index > two_years_ago]
+#
+#                # Update the cache with trimmed history
+#                cache[ticker]["dividend_history"] = div_series.to_dict()
+#
+#                # Now compute trailing 12-month yield
+#                one_year_ago = pd.Timestamp.now(tz=div_series.index.tz) - pd.DateOffset(years=1)
+#                recent_divs = div_series[div_series.index > one_year_ago]
+#
+#                if not recent_divs.empty and price > 0:
+#                    total_div = recent_divs.sum()
+#                    yield_pct = (total_div / price) * 100.0
+#                    print(f"[INFO] TTM dividend yield for {ticker}: {yield_pct:.2f}%")
+#                else:
+#                    yield_pct = 0.0
+#                    print(f"[INFO] No dividends in the last 12 months for {ticker}, yield set to 0")
+#
+#        # Determine dividend tax type
+#        dividend_tax_type = row.get("dividend_tax_type")
+#
+#        # Money market funds use override yield, assumed ordinary income
+#        if "override_yield_pct" in row and row["override_yield_pct"] is not None:
+#            dividend_tax_type = dividend_tax_type or "ordinary"
+#        else:
+#            # Default for all others with dividend history is qualified
+#            dividend_tax_type = dividend_tax_type or "qualified"
+#
+#        mv = shares * price
+#        annual_income = mv * (yield_pct / 100.0)
+#        print(f'Ticker: {ticker}, Income: {annual_income}, Divendend Type: {div_type}')
+#        annual_by_account[acct] += annual_income
+#
+#        if acct == "brokerage":
+#            if dividend_tax_type == "qualified":
+#                brokerage_qualified += annual_income
+#            else if dividend_tax_type == "capital_gains":
+#                brokerage_capital_gains += annual_income
+#            else:
+#                brokerage_ordinary += annual_income
+#
+#    total_annual = sum(annual_by_account.values())
+#    total_monthly = total_annual / 12.0
+#
+#    taxable_ordinary = annual_by_account["deferred"] + brokerage_ordinary
+#
+#    ss_annual = social_security_monthly * 12.0
+#    ss_taxable = taxable_social_security(taxable_ordinary, ss_annual)
+#    taxable_ordinary += ss_taxable
+#
+#    ordinary_after_deduction = max(0.0, taxable_ordinary - STANDARD_DEDUCTION)
+#    ordinary_tax = ordinary_tax_on_amount(ordinary_after_deduction)
+#    capg_tax = capital_gains_tax_for_qualified(brokerage_qualified, ordinary_after_deduction)
+#    federal_tax = ordinary_tax + capg_tax
+#
+#    taxable_withdrawals_annual = (
+#        annual_by_account["deferred"] + brokerage_ordinary + brokerage_qualified + ss_taxable
+#    )
+#    effective_rate = (federal_tax / taxable_withdrawals_annual) if taxable_withdrawals_annual > 0 else 0.0
+#
+#    return {
+#        "annual_by_account": annual_by_account,
+#        "brokerage_qualified": brokerage_qualified,
+#        "brokerage_ordinary": brokerage_ordinary,
+#        "social_security_monthly": social_security_monthly,
+#        "social_security_taxable_annual": ss_taxable,
+#        "total_annual_withdrawal": total_annual + ss_annual,
+#        "total_monthly_withdrawal": total_monthly + social_security_monthly,
+#        "estimated_federal_tax": federal_tax,
+#        "effective_tax_rate_on_taxable_withdrawals": effective_rate,
+#        "ordinary_after_deduction": ordinary_after_deduction,
+#        "ordinary_tax": ordinary_tax,
+#        "capital_gains_tax": capg_tax,
+#        "standard_deduction_used": min(STANDARD_DEDUCTION, taxable_ordinary),
+#    }
 
 
 # ---------- CLI ----------
