@@ -275,6 +275,9 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
     total_monthly = total_annual / 12.0
 
     taxable_ordinary = annual_by_account["deferred"] + brokerage_ordinary
+    print(f"[CALC] Taxable ordinary: ${taxable_ordinary:,.2f}")
+    print(f"[CALC] Brokerage qualifed: ${brokerage_qualified:,.2f}")
+    print(f"[CALC] Brokerage cap gains: ${brokerage_capital_gains:,.2f}")
 
     ss_annual = social_security_monthly * 12.0
     ss_taxable = taxable_social_security(taxable_ordinary, ss_annual)
