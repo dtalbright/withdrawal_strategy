@@ -208,3 +208,4 @@ __marimo__/
 
 # Ticker cache
 ticker_data_cache.json
+beta_cache.json

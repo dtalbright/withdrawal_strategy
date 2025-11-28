@@ -1,17 +1,17 @@
 [
-    {"ticker": "VFIAX", "account_type": "brokerage", "shares": 350, "cost_basis": 272.86, "cap_gain_method": "average"},
-    {"ticker": "VTSAX", "account_type": "brokerage", "shares": 1000, "cost_basis": 69.20, "cap_gain_method": "average"},
+    {"ticker": "VFIAX", "account_type": "brokerage", "shares": 350},
+    {"ticker": "VTSAX", "account_type": "brokerage", "shares": 1000},
     {"ticker": "SPYI", "account_type": "brokerage", "shares": 5000, "cost_basis": 51.30, "cap_gain_method": "average", "dividend_tax_type": "capital_gains"},
-    {"ticker": "VOO", "account_type": "brokerage", "shares": 400, "cost_basis": 574.77, "cap_gain_method": "average"},
+    {"ticker": "VOO", "account_type": "brokerage", "shares": 400},
     {"ticker": "VMFXX", "account_type": "brokerage", "shares": 250000, "cost_basis": 1.00, "cap_gain_method": "average", "override_yield_pct": 3.00},
-    {"ticker": "FXAIX", "account_type": "deferred", "shares": 2900, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "FXNAX", "account_type": "deferred", "shares": 14874, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "IVV", "account_type": "deferred", "shares": 75, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "DIVO", "account_type": "deferred", "shares": 3300, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "FTEC", "account_type": "deferred", "shares": 435, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "JEPI", "account_type": "deferred", "shares": 1750, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "JEPQ", "account_type": "deferred", "shares": 2100, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "VEU", "account_type": "deferred", "shares": 1700, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "VGK", "account_type": "deferred", "shares": 1700, "cost_basis": 10000, "cap_gain_method": "average"}
+    {"ticker": "FXAIX", "account_type": "deferred", "shares": 2900},
+    {"ticker": "FXNAX", "account_type": "deferred", "shares": 14874},
+    {"ticker": "IVV", "account_type": "deferred", "shares": 75},
+    {"ticker": "DIVO", "account_type": "deferred", "shares": 3300},
+    {"ticker": "FTEC", "account_type": "deferred", "shares": 435},
+    {"ticker": "JEPI", "account_type": "deferred", "shares": 1750},
+    {"ticker": "JEPQ", "account_type": "deferred", "shares": 2100},
+    {"ticker": "VEU", "account_type": "deferred", "shares": 1700},
+    {"ticker": "VGK", "account_type": "deferred", "shares": 1700}
 ]
 

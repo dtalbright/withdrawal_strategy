@@ -9,24 +9,6 @@ Features:
  - Calculates approximate federal tax for 2026 single filers
  - Optionally includes monthly Social Security income
 
-JSON input format:
-[
-  {
-    "ticker": "VTI",
-    "account_type": "brokerage",
-    "shares": 100,
-    "cost_basis": 20000,
-    "cap_gain_method": "fifo"
-  },
-  {
-    "ticker": "VBTLX",
-    "account_type": "deferred",
-    "shares": 300,
-    "cost_basis": 30000,
-    "cap_gain_method": "average"
-  }
-]
-
 Account types: "deferred", "brokerage", "roth"
 """
 
@@ -141,6 +123,10 @@ def ordinary_tax_on_amount(taxable_amount: float) -> float:
 
 
 def capital_gains_tax_for_qualified(q_amount: float, ordinary_income_after_deduction: float) -> float:
+    """
+    Calculate LTCG / qualified dividend tax on q_amount, given the taxable ordinary
+    income (i.e. ordinary income after deductions) that sits below them in the stack.
+    """
     if q_amount <= 0:
         return 0.0
     tax = 0.0
@@ -190,11 +176,12 @@ def parse_portfolio_json(path: str) -> List[Dict]:
 # ---------- Main estimator ----------
 def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
                          force_refresh: bool = False,
+                         additional_ltcg: float = 0.0,
                          social_security_monthly: float = 0.0):
     annual_by_account = {"deferred": 0.0, "brokerage": 0.0, "roth": 0.0}
     brokerage_qualified = 0.0
     brokerage_ordinary = 0.0
-    brokerage_capital_gains = 0.0
+    brokerage_capital_gains = float(additional_ltcg or 0.0)
 
     for r in rows:
         ticker = r["ticker"].strip().upper()
@@ -271,7 +258,12 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
                 brokerage_ordinary += annual_income
 
     # --- Totals and tax computations ---
-    total_annual = sum(annual_by_account.values())
+    # Include additional LTCG as part of brokerage withdrawal
+    total_annual = (
+        annual_by_account["deferred"]
+        + annual_by_account["roth"]
+        + (annual_by_account["brokerage"] + additional_ltcg)
+    )
     total_monthly = total_annual / 12.0
 
     taxable_ordinary = annual_by_account["deferred"] + brokerage_ordinary
@@ -286,12 +278,13 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
     ordinary_after_deduction = max(0.0, taxable_ordinary - STANDARD_DEDUCTION)
     ordinary_tax = ordinary_tax_on_amount(ordinary_after_deduction)
 
-    # Step 1: tax on qualified dividends
+    # Step 1: tax on qualified dividends (they fill the LTCG 0%/15% bands first)
     qualified_dividend_tax = capital_gains_tax_for_qualified(
         brokerage_qualified, ordinary_after_deduction
     )
 
-    # Step 2: now treat capital gains distributions, stacking after qualified dividends
+    # Step 2: now treat capital gains distributions (including additional_ltcg),
+    # stacking after qualified dividends
     ordinary_plus_q = ordinary_after_deduction + brokerage_qualified
     capital_gains_tax_amount = capital_gains_tax_for_qualified(
         brokerage_capital_gains, ordinary_plus_q
@@ -302,6 +295,7 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
 
     federal_tax = ordinary_tax + capg_tax
 
+    # taxable withdrawals used for effective rate: include dividends, interest, capital gains tax base and SS taxable portion
     taxable_withdrawals_annual = (
         annual_by_account["deferred"]
         + brokerage_ordinary
@@ -330,151 +324,97 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
         "standard_deduction_used": min(STANDARD_DEDUCTION, taxable_ordinary),
     }
 
-#def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
-#                         force_refresh: bool = False,
-#                         social_security_monthly: float = 0.0):
-#    annual_by_account = {"deferred": 0.0, "brokerage": 0.0, "roth": 0.0}
-#    brokerage_qualified = 0.0
-#    brokerage_ordinary = 0.0
-#    brokerage_capital_gains = 0.0
-#
-#    for r in rows:
-#        ticker = r["ticker"].strip().upper()
-#        acct = r["account_type"].strip().lower()
-#        shares = float(r["shares"])
-#
-#        info = get_ticker_info(ticker, cache, force_refresh=force_refresh)
-#        price = info.get("price")
-#        if price is None:
-#            raise RuntimeError(f"Could not fetch price for {ticker}")
-#
-#        # --- Determine yield_pct (simplified logic) ---
-#        yield_override = r.get("override_yield_pct")
-#        price = info.get("price") or 1.0
-#
-#        if yield_override is not None:
-#            # Explicit override for money market funds (or any manual entry)
-#            yield_pct = float(yield_override)
-#            print(f"[INFO] Using override yield for {ticker}: {yield_pct:.2f}%")
-#
-#        else:
-#            # Always compute yield based on trailing 12-month actual dividends
-#            divhist = info.get("dividend_history")
-#            if not divhist:
-#                yield_pct = 0.0
-#                print(f"[INFO] No dividend history for {ticker}, yield set to 0")
-#            else:
-#                # Keep only the last 2 years of dividend data for cache compactness
-#                div_series = pd.Series(divhist)
-#                div_series.index = pd.to_datetime(div_series.index, utc=True, errors="coerce")
-#                div_series = div_series[~div_series.index.isna()]  # remove bad timestamps
-#                two_years_ago = pd.Timestamp.now(tz=div_series.index.tz) - pd.DateOffset(years=2)
-#                div_series = div_series[div_series.index > two_years_ago]
-#
-#                # Update the cache with trimmed history
-#                cache[ticker]["dividend_history"] = div_series.to_dict()
-#
-#                # Now compute trailing 12-month yield
-#                one_year_ago = pd.Timestamp.now(tz=div_series.index.tz) - pd.DateOffset(years=1)
-#                recent_divs = div_series[div_series.index > one_year_ago]
-#
-#                if not recent_divs.empty and price > 0:
-#                    total_div = recent_divs.sum()
-#                    yield_pct = (total_div / price) * 100.0
-#                    print(f"[INFO] TTM dividend yield for {ticker}: {yield_pct:.2f}%")
-#                else:
-#                    yield_pct = 0.0
-#                    print(f"[INFO] No dividends in the last 12 months for {ticker}, yield set to 0")
-#
-#        # Determine dividend tax type
-#        dividend_tax_type = row.get("dividend_tax_type")
-#
-#        # Money market funds use override yield, assumed ordinary income
-#        if "override_yield_pct" in row and row["override_yield_pct"] is not None:
-#            dividend_tax_type = dividend_tax_type or "ordinary"
-#        else:
-#            # Default for all others with dividend history is qualified
-#            dividend_tax_type = dividend_tax_type or "qualified"
-#
-#        mv = shares * price
-#        annual_income = mv * (yield_pct / 100.0)
-#        print(f'Ticker: {ticker}, Income: {annual_income}, Divendend Type: {div_type}')
-#        annual_by_account[acct] += annual_income
-#
-#        if acct == "brokerage":
-#            if dividend_tax_type == "qualified":
-#                brokerage_qualified += annual_income
-#            else if dividend_tax_type == "capital_gains":
-#                brokerage_capital_gains += annual_income
-#            else:
-#                brokerage_ordinary += annual_income
-#
-#    total_annual = sum(annual_by_account.values())
-#    total_monthly = total_annual / 12.0
-#
-#    taxable_ordinary = annual_by_account["deferred"] + brokerage_ordinary
-#
-#    ss_annual = social_security_monthly * 12.0
-#    ss_taxable = taxable_social_security(taxable_ordinary, ss_annual)
-#    taxable_ordinary += ss_taxable
-#
-#    ordinary_after_deduction = max(0.0, taxable_ordinary - STANDARD_DEDUCTION)
-#    ordinary_tax = ordinary_tax_on_amount(ordinary_after_deduction)
-#    capg_tax = capital_gains_tax_for_qualified(brokerage_qualified, ordinary_after_deduction)
-#    federal_tax = ordinary_tax + capg_tax
-#
-#    taxable_withdrawals_annual = (
-#        annual_by_account["deferred"] + brokerage_ordinary + brokerage_qualified + ss_taxable
-#    )
-#    effective_rate = (federal_tax / taxable_withdrawals_annual) if taxable_withdrawals_annual > 0 else 0.0
-#
-#    return {
-#        "annual_by_account": annual_by_account,
-#        "brokerage_qualified": brokerage_qualified,
-#        "brokerage_ordinary": brokerage_ordinary,
-#        "social_security_monthly": social_security_monthly,
-#        "social_security_taxable_annual": ss_taxable,
-#        "total_annual_withdrawal": total_annual + ss_annual,
-#        "total_monthly_withdrawal": total_monthly + social_security_monthly,
-#        "estimated_federal_tax": federal_tax,
-#        "effective_tax_rate_on_taxable_withdrawals": effective_rate,
-#        "ordinary_after_deduction": ordinary_after_deduction,
-#        "ordinary_tax": ordinary_tax,
-#        "capital_gains_tax": capg_tax,
-#        "standard_deduction_used": min(STANDARD_DEDUCTION, taxable_ordinary),
-#    }
 
+def print_tax_bracket_breakdown(ordinary_taxable, qualified_divs, capg, ordinary_brackets, cg_0_limit, cg_15_limit):
+    print("\n--- Ordinary Income Tax Breakdown ---")
+    remaining = ordinary_taxable
+    lower = 0.0
+    tax_ord = 0.0
+    for upper, rate in ordinary_brackets:
+        if remaining <= 0:
+            break
+        if upper is None:
+            taxable_here = remaining
+        else:
+            taxable_here = min(remaining, upper - lower)
+        tax_slice = taxable_here * rate
+        print(f"  ${lower:,.0f} – ${lower + taxable_here:,.0f} @ {rate*100:.0f}%: ${tax_slice:,.2f}")
+        tax_ord += tax_slice
+        remaining -= taxable_here
+        lower = upper or lower
+
+    print(f"Total ordinary income: ${ordinary_taxable:,.2f} → Ordinary tax: ${tax_ord:,.2f}")
+
+    # Combine qualified divs + long-term cap gains
+    cg_total = qualified_divs + capg
+    print("\n--- Qualified Dividends & Long-Term Cap Gains Tax Breakdown ---")
+    # Determine how much fits in 0% band
+    space0 = max(0.0, cg_0_limit - ordinary_taxable)
+    cg0 = min(cg_total, space0)
+    cgrem = cg_total - cg0
+    tax_cg = 0.0
+    print(f"  ${ordinary_taxable:,.0f} base → 0% band up to ${cg_0_limit:,.0f}")
+    print(f"    {cg0:,.2f} taxed @ 0% → $0.00")
+    if cgrem > 0:
+        cap15_space = cg_15_limit - max(ordinary_taxable, cg_0_limit)
+        take15 = min(cgrem, cap15_space)
+        tax_15 = take15 * 0.15
+        print(f"    {take15:,.2f} taxed @ 15% → ${tax_15:,.2f}")
+        tax_cg += tax_15
+        cgrem -= take15
+        if cgrem > 0:
+            tax_20 = cgrem * 0.20
+            print(f"    {cgrem:,.2f} taxed @ 20% → ${tax_20:,.2f}")
+            tax_cg += tax_20
+
+    print(f"Total qualified+CG income: ${cg_total:,.2f} → CG tax: ${tax_cg:,.2f}")
+    print(f"\nEstimated total federal tax: ${tax_ord + tax_cg:,.2f}")
 
 # ---------- CLI ----------
 def print_report(res: Dict):
     print("\n=== Withdrawal & Federal Tax Estimate (2026, single filer) ===\n")
     print("Annual withdrawals by account:")
-    for a, v in res["annual_by_account"].items():
-        print(f"  {a:9s}: ${v:,.2f}")
+    print(f"  deferred : ${res['annual_by_account']['deferred']:,.2f}")
+    print(f"  brokerage: ${res['annual_by_account']['brokerage'] + res['brokerage_capital_gains']:,.2f}")
+    print(f"  roth     : ${res['annual_by_account']['roth']:,.2f}")
     print(f"\nTotal annual withdrawal (incl. Social Security): ${res['total_annual_withdrawal']:,.2f}")
     print(f"Total monthly withdrawal: ${res['total_monthly_withdrawal']:,.2f}")
     print(f"\nTaxable Social Security (annual): ${res['social_security_taxable_annual']:,.2f}")
     print(f"\nOrdinary income after standard deduction: ${res['ordinary_after_deduction']:,.2f}")
     print(f"Estimated ordinary tax: ${res['ordinary_tax']:,.2f}")
-    print(f"Estimated tax on qualified dividends: ${res['capital_gains_tax']:,.2f}")
+    print(f"Estimated capital gains tax: ${res['capital_gains_tax']:,.2f}")
     print(f"\nEstimated federal tax (annual): ${res['estimated_federal_tax']:,.2f}")
     print(f"Effective tax rate on taxable withdrawals: {res['effective_tax_rate_on_taxable_withdrawals']*100:.2f}%")
     print("\n(Notes: Roth withdrawals tax-free; SS taxed using provisional income rules.)\n")
+
+    print_tax_bracket_breakdown(
+        ordinary_taxable = res["ordinary_after_deduction"],
+        qualified_divs   = res["brokerage_qualified"],
+        capg             = res["brokerage_capital_gains"],
+        ordinary_brackets = ORDINARY_BRACKETS,
+        cg_0_limit       = CG_0pct_limit_single,
+        cg_15_limit      = CG_15pct_limit_single
+    )
+
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Withdrawal estimator (JSON input, 2026 single filer).")
     parser.add_argument("jsonfile", help="JSON file of holdings")
-    parser.add_argument("--refresh", action="store_true", help="Force refresh of ticker data")
-    parser.add_argument("--social-security", type=float, default=0.0,
+    parser.add_argument("-r", "--refresh", action="store_true", help="Force refresh of ticker data")
+    parser.add_argument("-s", "--social-security", type=float, default=0.0,
                         help="Monthly Social Security income (optional)")
+    parser.add_argument("-c", "--capital_gains", type=float, default=0.0,
+                        help="Total long-term capital gains to include in the tax calculation")
+
     args = parser.parse_args()
 
     rows = parse_portfolio_json(args.jsonfile)
     cache = load_cache()
     res = estimate_with_lookup(rows, cache,
                                force_refresh=args.refresh,
+                               additional_ltcg=args.capital_gains,
                                social_security_monthly=args.social_security)
     save_cache(cache)
     print_report(res)

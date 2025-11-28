@@ -1,18 +1,18 @@
 [
-    {"ticker": "VFIAX", "account_type": "brokerage", "shares": 330, "cost_basis": 272.86, "cap_gain_method": "average"},
-    {"ticker": "VTSAX", "account_type": "brokerage", "shares": 973, "cost_basis": 69.20, "cap_gain_method": "average"},
-    {"ticker": "SPYI", "account_type": "brokerage", "shares": 1041, "cost_basis": 51.30, "cap_gain_method": "average", "dividend_tax_type": "capital_gains"},
-    {"ticker": "VOO", "account_type": "brokerage", "shares": 350, "cost_basis": 574.77, "cap_gain_method": "average"},
-    {"ticker": "VMFXX", "account_type": "brokerage", "shares": 277529, "cost_basis": 1.00, "cap_gain_method": "average", "override_yield_pct": 4.01},
-    {"ticker": "FXAIX", "account_type": "deferred", "shares": 2195, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "FXNAX", "account_type": "deferred", "shares": 14874, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "DIVO", "account_type": "deferred", "shares": 2809, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "FTEC", "account_type": "deferred", "shares": 210, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "GLD", "account_type": "deferred", "shares": 67, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "JEPI", "account_type": "deferred", "shares": 1307, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "JEPQ", "account_type": "deferred", "shares": 1560, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "VEU", "account_type": "deferred", "shares": 1053, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "VGK", "account_type": "deferred", "shares": 938, "cost_basis": 10000, "cap_gain_method": "average"},
-    {"ticker": "FZCXX", "account_type": "deferred", "shares": 152730, "cost_basis": 1.00, "cap_gain_method": "average", "override_yield_pct": 3.84}
+    {"ticker": "VFIAX", "account_type": "brokerage", "shares": 330},
+    {"ticker": "VTSAX", "account_type": "brokerage", "shares": 973},
+    {"ticker": "SPYI", "account_type": "brokerage", "shares": 1041, "dividend_tax_type": "capital_gains"},
+    {"ticker": "VOO", "account_type": "brokerage", "shares": 350},
+    {"ticker": "VMFXX", "account_type": "brokerage", "shares": 277529, "override_yield_pct": 4.01},
+    {"ticker": "FXAIX", "account_type": "deferred", "shares": 2195},
+    {"ticker": "FXNAX", "account_type": "deferred", "shares": 14874},
+    {"ticker": "DIVO", "account_type": "deferred", "shares": 2809},
+    {"ticker": "FTEC", "account_type": "deferred", "shares": 210},
+    {"ticker": "GLD", "account_type": "deferred", "shares": 67},
+    {"ticker": "JEPI", "account_type": "deferred", "shares": 1307},
+    {"ticker": "JEPQ", "account_type": "deferred", "shares": 1560},
+    {"ticker": "VEU", "account_type": "deferred", "shares": 1053},
+    {"ticker": "VGK", "account_type": "deferred", "shares": 938},
+    {"ticker": "FZCXX", "account_type": "deferred", "shares": 152730, "override_yield_pct": 3.84}
 ]
 
