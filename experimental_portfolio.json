@@ -1,0 +1,17 @@
+[
+    {"ticker": "VFIAX", "account_type": "brokerage", "shares": 350},
+    {"ticker": "VTSAX", "account_type": "brokerage", "shares": 1000},
+    {"ticker": "SPYI", "account_type": "brokerage", "shares": 5000, "dividend_tax_type": "capital_gains"},
+    {"ticker": "VOO", "account_type": "brokerage", "shares": 400},
+    {"ticker": "VMFXX", "account_type": "brokerage", "shares": 250000, "override_yield_pct": 3.00},
+    {"ticker": "FXAIX", "account_type": "deferred", "shares": 2900},
+    {"ticker": "FXNAX", "account_type": "deferred", "shares": 14874},
+    {"ticker": "IVV", "account_type": "deferred", "shares": 75},
+    {"ticker": "DIVO", "account_type": "deferred", "shares": 1100},
+    {"ticker": "FTEC", "account_type": "deferred", "shares": 435},
+    {"ticker": "JEPI", "account_type": "deferred", "shares": 3000},
+    {"ticker": "JEPQ", "account_type": "deferred", "shares": 700},
+    {"ticker": "VEU", "account_type": "deferred", "shares": 0},
+    {"ticker": "VGK", "account_type": "deferred", "shares": 0}
+]
+
