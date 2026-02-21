@@ -283,7 +283,6 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
 
         mv = shares * price
         annual_income = mv * (yield_pct / 100.0)
-        print(f"[CALC] {ticker}: MV=${mv:,.2f}, Income=${annual_income:,.2f}, Type={dividend_tax_type}")
 
         # --- Accumulate by account type ---
         if acct not in annual_by_account:
@@ -297,6 +296,10 @@ def estimate_with_lookup(rows: List[Dict], cache: Dict[str, Dict],
                 brokerage_capital_gains += annual_income
             else:
                 brokerage_ordinary += annual_income
+        if acct == "deferred":
+            dividend_tax_type = "ordinary"
+
+        print(f"[CALC] {ticker}: MV=${mv:,.2f}, Income=${annual_income:,.2f}, Type={dividend_tax_type}")
 
     # --- Totals & ensure additional LTCG is reflected in brokerage withdrawals and totals ---
     # add additional_ltcg into brokerage withdrawals via brokerage_capital_gains earlier

@@ -1,18 +1,18 @@
 [
     {"ticker": "VFIAX", "account_type": "brokerage", "shares": 330},
-    {"ticker": "VTSAX", "account_type": "brokerage", "shares": 973},
-    {"ticker": "SPYI", "account_type": "brokerage", "shares": 1041, "dividend_tax_type": "capital_gains"},
-    {"ticker": "VOO", "account_type": "brokerage", "shares": 350},
-    {"ticker": "VMFXX", "account_type": "brokerage", "shares": 277529, "override_yield_pct": 4.01},
-    {"ticker": "FXAIX", "account_type": "deferred", "shares": 2195},
-    {"ticker": "FXNAX", "account_type": "deferred", "shares": 14874},
-    {"ticker": "DIVO", "account_type": "deferred", "shares": 2809},
-    {"ticker": "FTEC", "account_type": "deferred", "shares": 210},
-    {"ticker": "GLD", "account_type": "deferred", "shares": 67},
-    {"ticker": "JEPI", "account_type": "deferred", "shares": 1307},
-    {"ticker": "JEPQ", "account_type": "deferred", "shares": 1560},
-    {"ticker": "VEU", "account_type": "deferred", "shares": 1053},
-    {"ticker": "VGK", "account_type": "deferred", "shares": 938},
-    {"ticker": "FZCXX", "account_type": "deferred", "shares": 152730, "override_yield_pct": 3.84}
+    {"ticker": "VTSAX", "account_type": "brokerage", "shares": 975},
+    {"ticker": "SPYI", "account_type": "brokerage", "shares": 1512, "dividend_tax_type": "capital_gains"},
+    {"ticker": "VOO", "account_type": "brokerage", "shares": 450},
+    {"ticker": "VYMI", "account_type": "brokerage", "shares": 126},
+    {"ticker": "VMFXX", "account_type": "brokerage", "shares": 255130, "override_yield_pct": 3.6},
+    {"ticker": "FXAIX", "account_type": "brokerage", "shares": 2195},
+    {"ticker": "FXAIX", "account_type": "deferred", "shares": 2370},
+    {"ticker": "FXNAX", "account_type": "deferred", "shares": 14245},
+    {"ticker": "DIVO", "account_type": "deferred", "shares": 2895},
+    {"ticker": "FTEC", "account_type": "deferred", "shares": 382},
+    {"ticker": "JEPI", "account_type": "deferred", "shares": 1340},
+    {"ticker": "JEPQ", "account_type": "deferred", "shares": 1662},
+    {"ticker": "VEU", "account_type": "deferred", "shares": 1518},
+    {"ticker": "VGK", "account_type": "deferred", "shares": 1352}
 ]
 
